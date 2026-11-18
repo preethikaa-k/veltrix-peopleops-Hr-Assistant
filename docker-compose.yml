@@ -1,0 +1,38 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data          # graders replace ./data with their own copy
+    environment:
+      CORPUS_DIR: /app/data/corpus
+      MANIFEST_PATH: /app/data/manifest.json
+      DB_PATH: /app/data/veltrix.db
+      APP_TODAY: ${APP_TODAY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  # Optional demo UI. NOT started by plain `docker compose up`, so it can never block the API.
+  # Run with:  docker compose --profile ui up
+  ui:
+    profiles: ["ui"]
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      - api
