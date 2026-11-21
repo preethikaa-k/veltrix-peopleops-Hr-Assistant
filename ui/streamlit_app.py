@@ -114,7 +114,7 @@ st.markdown(
     }
     </style>
     """,
-    unsafe_html=True,
+    unsafe_allow_html=True,
 )
 
 
@@ -161,9 +161,9 @@ with st.sidebar:
     # API status indicator
     is_ready = api_health(API_URL_DEFAULT)
     if is_ready:
-        st.markdown('<span class="status-badge-ready">🟢 Backend Connected & Ready</span>', unsafe_html=True)
+        st.markdown('<span class="status-badge-ready">🟢 Backend Connected & Ready</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="status-badge-offline">🔴 Backend Offline</span>', unsafe_html=True)
+        st.markdown('<span class="status-badge-offline">🔴 Backend Offline</span>', unsafe_allow_html=True)
 
     api_url = st.text_input("API URL", API_URL_DEFAULT).rstrip("/")
 
@@ -219,7 +219,7 @@ for m in st.session_state.messages:
             if m["role"] == "assistant" and "data" in m:
                 data = m["data"]
                 route_desc = ROUTE_LABELS.get(data.get("route", ""), data.get("route", ""))
-                st.markdown(f'<span class="route-chip">{route_desc}</span>', unsafe_html=True)
+                st.markdown(f'<span class="route-chip">{route_desc}</span>', unsafe_allow_html=True)
 
 # Handle 2-Step Confirmation Buttons if waiting
 last_msg = st.session_state.messages[-1] if st.session_state.messages else None
@@ -231,7 +231,7 @@ if (
     with st.container():
         st.markdown(
             '<div class="confirm-card"><b>⚠️ Confirmation Needed:</b> Would you like to proceed with this leave action?</div>',
-            unsafe_html=True,
+            unsafe_allow_html=True,
         )
         col1, col2, _ = st.columns([1, 1, 2])
         if col1.button("✅ Yes, Confirm", type="primary", use_container_width=True):
@@ -262,7 +262,7 @@ if user_query and employee_id:
             
             # Display clean route category tag (No sources expander)
             route_desc = ROUTE_LABELS.get(response_data.get("route", ""), response_data.get("route", ""))
-            st.markdown(f'<span class="route-chip">{route_desc}</span>', unsafe_html=True)
+            st.markdown(f'<span class="route-chip">{route_desc}</span>', unsafe_allow_html=True)
 
             # Store in session state for re-rendering
             st.session_state.messages.append({
