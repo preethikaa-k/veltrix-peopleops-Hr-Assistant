@@ -155,24 +155,14 @@ def call_chat_api(url: str, employee_id: str, text: str) -> dict | None:
 if "session_id" not in st.session_state:
     new_conversation()
 
+api_url = API_URL_DEFAULT
+
 with st.sidebar:
-    st.title("⚙️ Configuration")
-    
-    # API status indicator
-    is_ready = api_health(API_URL_DEFAULT)
-    if is_ready:
-        st.markdown('<span class="status-badge-ready">🟢 Backend Connected & Ready</span>', unsafe_allow_html=True)
-    else:
-        st.markdown('<span class="status-badge-offline">🔴 Backend Offline</span>', unsafe_allow_html=True)
-
-    api_url = st.text_input("API URL", API_URL_DEFAULT).rstrip("/")
-
-    st.divider()
-    st.subheader("👤 Requester Identity")
+    st.subheader("👤 Employee Profile")
     
     # Profile selector helper
     selected_preset = st.selectbox(
-        "Choose Employee Profile:",
+        "Select Active Employee:",
         list(PRESET_PROFILES.keys()),
         index=0,
     )
@@ -180,7 +170,7 @@ with st.sidebar:
     preset_id = PRESET_PROFILES[selected_preset]
     if preset_id:
         employee_id = preset_id
-        st.caption(f"Active ID: `{employee_id}`")
+        st.caption(f"Logged in as: `{employee_id}`")
     else:
         employee_id = st.text_input("Enter Custom Employee ID", placeholder="e.g. E2004").strip()
 
@@ -191,7 +181,7 @@ with st.sidebar:
     st.divider()
     st.subheader("💡 Quick Prompts")
     for sample in SAMPLES:
-        if st.button(sample, use_container_width=True, disabled=not employee_id or not is_ready):
+        if st.button(sample, use_container_width=True, disabled=not employee_id):
             st.session_state.queued = sample
 
 # Switch conversation if employee changes
@@ -205,8 +195,6 @@ st.caption("AI-powered HR Assistant for Policy Guidance & Leave Management")
 
 if not employee_id:
     st.warning("👈 Please select or enter an Employee ID in the sidebar to begin.")
-elif not is_ready:
-    st.error(f"Cannot reach backend API at `{api_url}`. Make sure Uvicorn is running: `uvicorn app.main:app --port 8000`")
 
 # Render existing chat history
 for m in st.session_state.messages:
@@ -242,7 +230,7 @@ if (
             st.rerun()
 
 # User Input Box
-prompt = st.chat_input("Ask a question about HR policies or manage your leave...", disabled=not employee_id or not is_ready)
+prompt = st.chat_input("Ask a question about HR policies or manage your leave...", disabled=not employee_id)
 user_query = st.session_state.pop("queued", None) or prompt
 
 if user_query and employee_id:
