@@ -10,8 +10,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -57,19 +58,71 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
         log.error("unhandled error", extra={"error_type": type(exc).__name__})
         return JSONResponse({"detail": "internal error"}, status_code=500)
 
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(req: Request, exc: RequestValidationError):
+        # Spec rule: 401 identity check takes precedence over 400 body check
+        emp = (req.headers.get("X-Employee-Id") or "").strip()
+        if not emp:
+            return JSONResponse({"detail": "missing or unknown employee"}, status_code=401)
+        for err in exc.errors():
+            loc = [str(x).lower() for x in err.get("loc", ())]
+            if "header" in loc or "x-employee-id" in loc:
+                return JSONResponse({"detail": "missing or unknown employee"}, status_code=401)
+        return JSONResponse({"detail": "invalid request body"}, status_code=400)
+
     @app.get("/health")
     async def health():
         if app.state.ready:
             return {"status": "ok"}
         return JSONResponse({"status": "starting"}, status_code=503)
 
-    @app.post("/chat", response_model=ChatResponse)
-    async def chat(request: Request):
+    @app.post(
+        "/chat",
+        response_model=ChatResponse,
+        summary="Interact with HR Assistant",
+        description="Main conversational endpoint for HR policy Q&A and leave operations.",
+    )
+    async def chat(
+        request: Request,
+        body: Optional[ChatRequest] = Body(
+            None,
+            description="Chat request body with session_id and user message.",
+            openapi_examples={
+                "policy_question": {
+                    "summary": "Policy Question",
+                    "value": {
+                        "session_id": "session-101",
+                        "message": "How many days of sick leave do I get per year?",
+                    },
+                },
+                "balance_query": {
+                    "summary": "Check Leave Balance",
+                    "value": {
+                        "session_id": "session-102",
+                        "message": "What is my annual leave balance?",
+                    },
+                },
+                "apply_leave": {
+                    "summary": "Apply for Leave",
+                    "value": {
+                        "session_id": "session-103",
+                        "message": "Apply for annual leave from 2026-08-10 to 2026-08-14",
+                    },
+                },
+            },
+        ),
+        x_employee_id: Optional[str] = Header(
+            None,
+            alias="X-Employee-Id",
+            description="Authenticated Employee ID (e.g. E1001 for HR, E2002 for Manager, E2004 for Employee).",
+            examples=["E2004"],
+        ),
+    ):
         started = time.perf_counter()
         request_id = str(uuid.uuid4())
 
         # 1) Identity: header -> DB. Missing and unknown are indistinguishable (401).
-        employee_id = (request.headers.get("X-Employee-Id") or "").strip()
+        employee_id = (x_employee_id or request.headers.get("X-Employee-Id") or "").strip()
         if not employee_id:
             raise HTTPException(status_code=401, detail="missing or unknown employee")
 
@@ -87,20 +140,20 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
         if len(raw) > settings.max_body_bytes:
             raise HTTPException(status_code=400, detail="request body too large")
         try:
-            body = ChatRequest.model_validate(json.loads(raw))
+            parsed_body = ChatRequest.model_validate(json.loads(raw))
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
             raise HTTPException(status_code=400, detail="invalid request body")
 
         # 3) Session ownership.
         def _claim():
             with db.connect(settings.db_path) as conn:
-                return db.claim_session(conn, body.session_id, identity.employee_id)
+                return db.claim_session(conn, parsed_body.session_id, identity.employee_id)
 
         if not await run_in_threadpool(_claim):
             log.warning("session ownership violation", extra={"request_id": request_id, "employee_id": identity.employee_id})
             raise HTTPException(status_code=403, detail="session belongs to another employee")
 
-        ctx = RequestContext(identity, body.session_id, body.message, settings.app_today, request_id, settings)
+        ctx = RequestContext(identity, parsed_body.session_id, parsed_body.message, settings.app_today, request_id, settings)
         response = await run_in_threadpool(handle_message, ctx)
 
         # Output guard seam: a response that breaks the route contract is replaced, never sent.
