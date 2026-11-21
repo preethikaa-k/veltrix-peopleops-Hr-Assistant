@@ -96,10 +96,13 @@ make test                       # or: pytest
 
 ---
 
-## Known Limitations
-1. **Local Host OCR Dependency**: Automatic OCR of scanned documents requires the system `tesseract` binary. In Docker, `tesseract-ocr` is pre-installed; when running unit tests natively on a host machine without Tesseract, an embedded fallback representation is used.
-2. **Leave Boundaries**: The system is scoped strictly to whole-day leaves in calendar year 2026; half-day leaves and leaves outside 2026 are rejected per specification.
-3. **Single Pending Proposal**: Each session maintains at most one pending write proposal at a time. Issuing a new request or asking an unrelated question clears any waiting proposal.
+## Known Limitations & Scope Boundaries
+Per Section 3 of `TASK.pdf`, the system is strictly focused on core HR policy Q&A and leave management. The following items are explicitly out of scope:
+1. **Authentication / Login Portal**: Login is handled upstream by an API gateway (e.g. SSO/OAuth); the service relies solely on the verified `X-Employee-Id` header.
+2. **Leave Boundaries**: Scoped strictly to whole-day leaves in calendar year 2026; half-day leaves and leaves outside 2026 are rejected per specification.
+3. **Leave Approval Workflows & Emails**: Multi-step manager approval queues and outbound email notifications are out of scope.
+4. **Single Pending Proposal**: Each session maintains at most one pending write proposal at a time. Issuing a new request or asking an unrelated question clears any waiting proposal.
+5. **Local Host OCR Dependency**: Automatic OCR of scanned documents requires the system `tesseract` binary. In Docker, `tesseract-ocr` is pre-installed; when running unit tests natively on a host machine without Tesseract, an embedded fallback representation is used.
 
 ---
 
