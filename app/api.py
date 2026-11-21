@@ -81,6 +81,12 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
         response_model=ChatResponse,
         summary="Interact with HR Assistant",
         description="Main conversational endpoint for HR policy Q&A and leave operations.",
+        responses={
+            200: {"model": ChatResponse, "description": "Successful HR Assistant response with answer, route, and citations/tools."},
+            400: {"description": "Invalid or oversized request body."},
+            401: {"description": "Missing or unknown X-Employee-Id header."},
+            403: {"description": "Session belongs to another employee (session hijacking prevention)."},
+        },
     )
     async def chat(
         request: Request,
