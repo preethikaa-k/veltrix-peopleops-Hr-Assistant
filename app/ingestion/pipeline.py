@@ -38,6 +38,30 @@ def run_ingestion(settings: Settings) -> dict:
     if not settings.corpus_dir.is_dir():
         raise FileNotFoundError(f"CORPUS_DIR not found: {settings.corpus_dir}")
     manifest = _load_manifest(settings.manifest_path)
+
+    # Fast cache check: if documents are already indexed and files have not changed, skip re-parsing
+    with db.connect(settings.db_path) as conn:
+        try:
+            existing = {
+                r["doc_id"]: r["content_hash"]
+                for r in conn.execute("SELECT doc_id, content_hash FROM documents WHERE status='ok'")
+            }
+            chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            holiday_count = conn.execute("SELECT COUNT(*) FROM holidays").fetchone()[0]
+            if len(existing) == len(manifest) and chunk_count > 0:
+                hashes_match = True
+                for entry in manifest:
+                    path = settings.corpus_dir / entry["file"]
+                    if not path.is_file() or existing.get(entry["doc_id"]) != hashlib.sha256(path.read_bytes()).hexdigest():
+                        hashes_match = False
+                        break
+                if hashes_match:
+                    summary = {"documents": len(manifest), "failed": 0, "chunks": chunk_count, "holidays": holiday_count}
+                    log.info("corpus up to date; using cached index", extra=summary)
+                    return summary
+        except Exception:
+            pass
+
     log.info("ingestion started", extra={"documents": len(manifest), "tokenizer": tokenizer_backend()})
 
     prepared = []
