@@ -27,7 +27,20 @@ class Settings:
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Settings":
-        e = os.environ if env is None else env
+        e = dict(os.environ) if env is None else dict(env)
+        if env is None:
+            env_file = Path(".env")
+            if env_file.is_file():
+                try:
+                    for line in env_file.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k and k not in e:
+                                e[k] = v
+                except Exception:
+                    pass
         raw_today = (e.get("APP_TODAY") or "").strip()
         try:
             today = date.fromisoformat(raw_today) if raw_today else date.today()
