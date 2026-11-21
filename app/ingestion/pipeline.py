@@ -51,9 +51,9 @@ def run_ingestion(settings: Settings) -> dict:
             if not chunks:
                 raise ValueError("no extractable text")
             prepared.append((entry, hashlib.sha256(raw).hexdigest(), parsed, chunks, holidays, "ok"))
-            log.info("document ingested", extra={"doc_id": entry["doc_id"], "extraction": parsed.extraction,
-                                                 "chunks": len(chunks), "holidays": len(holidays),
-                                                 "ocr_confidence": parsed.ocr_confidence})
+            log.debug("document ingested", extra={"doc_id": entry["doc_id"], "extraction": parsed.extraction,
+                                                  "chunks": len(chunks), "holidays": len(holidays),
+                                                  "ocr_confidence": parsed.ocr_confidence})
         except Exception:  # noqa: BLE001 - isolate one bad file
             log.exception("document failed; marked as failed", extra={"doc_id": entry["doc_id"]})
             prepared.append((entry, None, None, [], [], "failed"))

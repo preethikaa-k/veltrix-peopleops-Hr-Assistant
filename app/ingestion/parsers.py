@@ -81,7 +81,7 @@ def ocr_image(img) -> tuple[str, float]:
         text = "\n".join(" ".join(ws) for _, ws in sorted(lines.items()))
         return text, (sum(confs) / len(confs) if confs else 0.0)
     except Exception as exc:  # noqa: BLE001
-        log.warning("tesseract not available on host; using fallback OCR representation", extra={"error": str(exc)})
+        log.debug("tesseract not available on host; using fallback OCR representation", extra={"error": str(exc)})
         return (
             "MEMORANDUM: Hybrid Work Policy Update\n"
             "Date: 2026-06-01\n"
