@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-11-22T11:41:02Z",
+  "overall_ragas_index": 78.4,
+  "metrics_summary": {
+    "faithfulness_pct": 100.0,
+    "answer_relevance_pct": 56.8,
+    "context_precision_pct": 78.2,
+    "context_recall_pct": 94.2
+  },
+  "sample_evaluations": [
+    {
+      "id": "RAGAS-01",
+      "query": "What is the bereavement leave policy?",
+      "answer": "Employees may take up to 5 working days of paid bereavement leave upon the death of an immediate family member [POL-LEAVE-GLOBAL-V2, 9. Bereavement leave]. \n\nImmediate family is defined as a spouse or partner, child, parent, sibling, grandparent, or grandchild, which includes step and in-law relationships [POL-LEAVE-GLOBAL-V2, 9. Bereavement leave].",
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
+      "context_precision": 1.0,
+      "context_recall": 0.9,
+      "ragas_score": 0.97
+    },
+    {
+      "id": "RAGAS-02",
+      "query": "How many sick days do I get per year?",
+      "answer": "Employees receive 12 working days of paid sick leave in each leave year [POL-LEAVE-GLOBAL-V2, 7. Sick leave].",
+      "faithfulness": 1.0,
+      "answer_relevance": 0.36,
+      "context_precision": 0.33,
+      "context_recall": 1.0,
+      "ragas_score": 0.51
+    },
+    {
+      "id": "RAGAS-03",
+      "query": "What is the carry forward limit for annual leave?",
+      "answer": "For employees in India, the regional addendum allows you to carry forward up to **15 days** of unused annual leave into the next leave year, and these carried-forward days do not expire on a fixed date [ADD-LEAVE-IN, 1. Carrying annual leave forward]. However, your total annual leave balance cannot exceed 45 days at any time [ADD-LEAVE-IN, 1. Carrying annual leave forward].\n\nFor employees generally under the global policy (Version 2), the carry",
+      "faithfulness": 1.0,
+      "answer_relevance": 0.45,
+      "context_precision": 0.58,
+      "context_recall": 1.0,
+      "ragas_score": 0.67
+    },
+    {
+      "id": "RAGAS-04",
+      "query": "Do I need a doctor certificate for sick leave?",
+      "answer": "A medical certificate is required for any sick leave absence of more than 3 consecutive working days [POL-LEAVE-GLOBAL-V2, 7. Sick leave].",
+      "faithfulness": 1.0,
+      "answer_relevance": 0.54,
+      "context_precision": 1.0,
+      "context_recall": 0.89,
+      "ragas_score": 0.8
+    },
+    {
+      "id": "RAGAS-05",
+      "query": "What was the sick leave allowance in 2025?",
+      "answer": "In 2025, the paid sick leave allowance was 10 working days per leave year [POL-LEAVE-GLOBAL-V1, 6. Sick leave].",
+      "faithfulness": 1.0,
+      "answer_relevance": 0.49,
+      "context_precision": 1.0,
+      "context_recall": 0.92,
+      "ragas_score": 0.78
+    }
+  ]
+}

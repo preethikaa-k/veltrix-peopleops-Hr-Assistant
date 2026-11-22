@@ -135,13 +135,19 @@ class LLMGateway:
         citations: list[Citation] = []
         seen = set()
 
-        # Find [DOC_ID, LOCATOR]
-        for m in re.finditer(r"\[([A-Z0-9_\-]+)\s*,\s*([^\]]+)\]", text):
-            doc_id, loc = m.group(1).strip(), m.group(2).strip()
-            key = (doc_id, loc)
-            if key not in seen:
-                seen.add(key)
-                citations.append(Citation(doc_id=doc_id, locator=loc))
+        # Find [DOC_ID, LOCATOR] with support for multi-citations separated by semicolons
+        for m in re.finditer(r"\[([^\]]+)\]", text):
+            bracket_content = m.group(1).strip()
+            parts = [p.strip() for p in bracket_content.split(";")]
+            for part in parts:
+                if "," in part:
+                    d_id, loc = part.split(",", 1)
+                    d_id, loc = d_id.strip(), loc.strip()
+                    if re.match(r"^[A-Z0-9_\-]+$", d_id) and loc:
+                        key = (d_id, loc)
+                        if key not in seen:
+                            seen.add(key)
+                            citations.append(Citation(doc_id=d_id, locator=loc))
 
         # Fallback to matched chunks if LLM didn't format brackets
         if not citations and chunks:

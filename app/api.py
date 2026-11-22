@@ -20,6 +20,7 @@ from app import db
 from app.config import Settings
 from app.ingestion import run_ingestion
 from app.logging_setup import register_sensitive_values, setup_logging
+from app.metrics import collector
 from app.models import ChatRequest, ChatResponse, RouteInvariantError, validate_route_invariants
 from app.orchestrator import RequestContext, handle_message
 
@@ -75,6 +76,14 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
         if app.state.ready:
             return {"status": "ok"}
         return JSONResponse({"status": "starting"}, status_code=503)
+
+    @app.get("/metrics", summary="Operational Metrics", description="Prometheus & JSON metrics for monitoring.")
+    async def metrics(request: Request):
+        accept = request.headers.get("accept", "")
+        if "text/plain" in accept:
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(collector.to_prometheus(), media_type="text/plain")
+        return collector.get_summary()
 
     @app.post(
         "/chat",
@@ -173,6 +182,15 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
                 route="refuse",
             )
 
+        lat_ms = round((time.perf_counter() - started) * 1000)
+        tool_name = response.tool_calls[0].name if response.tool_calls else None
+        collector.record_request(
+            status_code=200,
+            latency_ms=lat_ms,
+            route=response.route,
+            tool_name=tool_name,
+        )
+
         log.info(
             "chat handled",
             extra={
@@ -180,7 +198,7 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
                 "employee_id": identity.employee_id,
                 "route": response.route,
                 "message_chars": len(parsed_body.message),  # never the text: it may contain personal data
-                "latency_ms": round((time.perf_counter() - started) * 1000),
+                "latency_ms": lat_ms,
             },
         )
         return response

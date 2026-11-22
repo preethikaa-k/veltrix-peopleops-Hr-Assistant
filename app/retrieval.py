@@ -21,6 +21,7 @@ from typing import Optional, Sequence
 from app.db import Identity
 from app.embeddings import EmbeddingService
 from app.policy import DocMeta, can_read, is_eligible, region_matches
+from app.qdrant_service import get_qdrant_store
 from app.tokens import count_tokens
 
 log = logging.getLogger("veltrix.retrieval")
@@ -156,20 +157,32 @@ def _reciprocal_rank_fusion(
     return fused
 
 
-def _precedence_rerank(chunks: list[RetrievedChunk], identity: Identity) -> list[RetrievedChunk]:
+def _precedence_rerank(chunks: list[RetrievedChunk], identity: Identity, ref_date: date) -> list[RetrievedChunk]:
     """Stage-2 contextual reranker applying Section 5 precedence rules."""
     reranked: list[RetrievedChunk] = []
     for c in chunks:
         multiplier = 1.0
-        # Authority boost: policy, addendum, handbook outrank faq
+        # Authority boost (Section 5.1): policy, addendum, handbook outrank faq
         if c.doc_type in {"policy", "addendum", "handbook", "calendar"}:
             multiplier *= 1.25
         elif c.doc_type in {"faq", "wiki"}:
             multiplier *= 0.85
 
-        # Scope boost: regional addenda outrank global
-        if "GLOBAL" not in c.doc_id and identity.region in c.doc_id:
+        # Scope boost (Section 5.1): regional addenda outrank global for matching topics
+        if "GLOBAL" not in c.doc_id and identity.region in c.doc_id and c.bm25_score > 0:
             multiplier *= 1.2
+
+        # Recency boost (Section 5.2): Newer policy version outranks older superseded policy
+        if ref_date >= date(2026, 1, 1):
+            if c.effective_date >= date(2026, 1, 1):
+                multiplier *= 1.35
+            elif c.effective_date < date(2026, 1, 1) and ("V1" in c.doc_id or "2025" in c.doc_id):
+                multiplier *= 0.80
+        else:
+            if c.effective_date <= ref_date:
+                multiplier *= 1.35
+            else:
+                multiplier *= 0.70
 
         adjusted_score = c.score * multiplier
         reranked.append(
@@ -234,34 +247,80 @@ def retrieve_chunks(
     bm25_candidates: list[RetrievedChunk] = []
     vector_candidates: list[RetrievedChunk] = []
 
+    # 1. Sparse BM25 Keyword Search
     for r in rows:
         meta = meta_cache[r["doc_id"]]
         bm25 = _score_bm25(r["text"], r["locator"], r["title"], terms_to_use, meta)
         tokens = r["tokens"] if r["tokens"] else count_tokens(r["text"])
 
-        # Dense vector similarity
-        chunk_vec = _embedding_service.get_embedding(f"{r['title']} {r['locator']} {r['text'][:300]}")
-        vec_sim = _embedding_service.cosine_similarity(query_vec, chunk_vec)
-
-        base_chunk = RetrievedChunk(
-            chunk_id=r["chunk_id"],
-            doc_id=r["doc_id"],
-            ordinal=r["ordinal"],
-            locator=r["locator"],
-            kind=r["kind"],
-            text=r["text"],
-            tokens=tokens,
-            title=r["title"],
-            doc_type=r["doc_type"],
-            effective_date=date.fromisoformat(r["effective_date"]),
-            bm25_score=bm25,
-            vector_score=vec_sim,
-        )
-
         if bm25 > 0:
-            bm25_candidates.append(base_chunk)
-        if vec_sim > 0.15:
-            vector_candidates.append(base_chunk)
+            bm25_candidates.append(
+                RetrievedChunk(
+                    chunk_id=r["chunk_id"],
+                    doc_id=r["doc_id"],
+                    ordinal=r["ordinal"],
+                    locator=r["locator"],
+                    kind=r["kind"],
+                    text=r["text"],
+                    tokens=tokens,
+                    title=r["title"],
+                    doc_type=r["doc_type"],
+                    effective_date=date.fromisoformat(r["effective_date"]),
+                    bm25_score=bm25,
+                    vector_score=0.0,
+                )
+            )
+
+    # 2. Dense Semantic Vector Search via Qdrant with Metadata Payload Filtering
+    try:
+        qdrant = get_qdrant_store()
+        if not qdrant._is_indexed:
+            qdrant.index_chunks(conn, _embedding_service)
+
+        qdrant_hits = qdrant.search_with_metadata_filter(query_vec, identity, ref_date, limit=40, include_upcoming=include_upcoming)
+        for hit in qdrant_hits:
+            v_score = hit.get("vector_score", 0.0)
+            if v_score > 0.15:
+                tokens = hit["tokens"] if hit.get("tokens") else count_tokens(hit["text"])
+                vector_candidates.append(
+                    RetrievedChunk(
+                        chunk_id=hit["chunk_id"],
+                        doc_id=hit["doc_id"],
+                        ordinal=hit["ordinal"],
+                        locator=hit["locator"],
+                        kind=hit["kind"],
+                        text=hit["text"],
+                        tokens=tokens,
+                        title=hit["title"],
+                        doc_type=hit["doc_type"],
+                        effective_date=date.fromisoformat(hit["effective_date"]),
+                        bm25_score=0.0,
+                        vector_score=v_score,
+                    )
+                )
+    except Exception as q_exc:
+        log.warning("Qdrant vector search failed, falling back to direct similarity: %s", q_exc)
+        for r in rows:
+            chunk_vec = _embedding_service.get_embedding(f"{r['title']} {r['locator']} {r['text'][:300]}")
+            vec_sim = _embedding_service.cosine_similarity(query_vec, chunk_vec)
+            if vec_sim > 0.15:
+                tokens = r["tokens"] if r["tokens"] else count_tokens(r["text"])
+                vector_candidates.append(
+                    RetrievedChunk(
+                        chunk_id=r["chunk_id"],
+                        doc_id=r["doc_id"],
+                        ordinal=r["ordinal"],
+                        locator=r["locator"],
+                        kind=r["kind"],
+                        text=r["text"],
+                        tokens=tokens,
+                        title=r["title"],
+                        doc_type=r["doc_type"],
+                        effective_date=date.fromisoformat(r["effective_date"]),
+                        bm25_score=0.0,
+                        vector_score=vec_sim,
+                    )
+                )
 
     if not bm25_candidates and not vector_candidates:
         return [], list(upcoming_docs.values())
@@ -274,7 +333,7 @@ def retrieve_chunks(
     fused_chunks = _reciprocal_rank_fusion(bm25_candidates, vector_candidates)
 
     # 2. Stage-2 Contextual Precedence Reranking
-    reranked_chunks = _precedence_rerank(fused_chunks, identity)
+    reranked_chunks = _precedence_rerank(fused_chunks, identity, ref_date)
 
     # 3. Context Budget Gating (<= 3,000 tokens)
     selected: list[RetrievedChunk] = []

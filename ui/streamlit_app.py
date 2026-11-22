@@ -184,6 +184,25 @@ with st.sidebar:
         if st.button(sample, use_container_width=True, disabled=not employee_id):
             st.session_state.queued = sample
 
+    st.divider()
+    with st.expander("📊 Live Observability & Metrics", expanded=False):
+        try:
+            m_res = requests.get(f"{api_url}/metrics", timeout=2)
+            if m_res.status_code == 200:
+                m_data = m_res.json()
+                st.metric("Total API Requests", m_data.get("total_requests", 0))
+                lat = m_data.get("latency_ms", {})
+                c1, c2 = st.columns(2)
+                c1.metric("Avg Latency", f"{lat.get('avg', 0):.0f}ms")
+                c2.metric("P95 Latency", f"{lat.get('p95', 0):.0f}ms")
+                st.markdown(f"**🛡️ Guardrail Blocks:** `{m_data.get('routes', {}).get('refuse', 0)}`")
+                st.markdown(f"**⚡ Vector DB:** `Qdrant (Metadata Pre-Filter)`")
+                st.caption(f"Prometheus endpoint: `{api_url}/metrics?format=prometheus`")
+            else:
+                st.caption("Metrics endpoint unreachable.")
+        except Exception:
+            st.caption("Observability offline.")
+
 # Switch conversation if employee changes
 if st.session_state.get("owner") != employee_id:
     new_conversation()

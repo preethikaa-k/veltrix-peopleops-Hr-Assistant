@@ -103,12 +103,61 @@ def confirmation_node(state: AgentState) -> dict[str, Any]:
         ).fetchone()
 
         if prop_row:
-            if is_confirm:
+            action = prop_row["action"]
+            payload = json.loads(prop_row["payload"])
+
+            if action == "clarify_apply":
+                prev_type = payload.get("leave_type")
+                curr_type = "annual" if "annual" in msg else ("sick" if "sick" in msg else prev_type)
+                s, e, is_amb, is_past = parse_date_phrase(state["message"], state["today"])
+                if s is None and payload.get("start_date"):
+                    try:
+                        s = date.fromisoformat(payload["start_date"])
+                    except ValueError:
+                        pass
+                if e is None and payload.get("end_date"):
+                    try:
+                        e = date.fromisoformat(payload["end_date"])
+                    except ValueError:
+                        pass
+
+                if curr_type and s and e and not is_amb and not is_past:
+                    tool_ctx = ToolContext(conn, state["identity"], state["today"], state["request_id"])
+                    res = check_apply_leave(tool_ctx, curr_type, s.isoformat(), e.isoformat())
+                    if res.status == "error":
+                        conn.execute("DELETE FROM pending_proposals WHERE session_id = ?", (state["session_id"],))
+                        return {
+                            "route": "tool",
+                            "answer": res.message,
+                            "citations": [],
+                            "tool_calls": [ToolCall(name="apply_leave", args=res.args, status="error")],
+                            "pending_confirmation": False,
+                            "next_step": "end",
+                        }
+                    new_payload = json.dumps({"leave_type": curr_type, "start_date": s.isoformat(), "end_date": e.isoformat()})
+                    conn.execute(
+                        "INSERT OR REPLACE INTO pending_proposals(session_id, employee_id, action, payload, created_at) VALUES (?,?,?,?,?)",
+                        (state["session_id"], state["identity"].employee_id, "apply_leave", new_payload, datetime.now(timezone.utc).isoformat()),
+                    )
+                    w_days = res.data.get("working_days", 0)
+                    ans = (
+                        f"You are requesting {curr_type} leave from {s.isoformat()} to {e.isoformat()} ({w_days} working day(s)). "
+                        "Please confirm if you would like me to submit this request."
+                    )
+                    return {
+                        "route": "tool",
+                        "answer": ans,
+                        "citations": [],
+                        "tool_calls": [ToolCall(name="apply_leave", args=res.args, status="pending_confirmation")],
+                        "pending_confirmation": True,
+                        "next_step": "end",
+                    }
+                else:
+                    conn.execute("DELETE FROM pending_proposals WHERE session_id = ?", (state["session_id"],))
+            elif is_confirm:
                 # Execute confirmed proposal in atomic transaction
                 conn.execute("DELETE FROM pending_proposals WHERE session_id = ?", (state["session_id"],))
                 tool_ctx = ToolContext(conn, state["identity"], state["today"], state["request_id"])
-                action = prop_row["action"]
-                payload = json.loads(prop_row["payload"])
                 if action == "apply_leave":
                     res = apply_leave(tool_ctx, payload["leave_type"], payload["start_date"], payload["end_date"])
                 else:
@@ -146,7 +195,10 @@ def intent_router_node(state: AgentState) -> dict[str, Any]:
         return {"next_step": "hybrid_balance"}
 
     # 2. Apply leave intent
-    apply_keywords = ["apply", "take leave", "book leave", "request leave", "i want leave", "take off", "need leave"]
+    apply_keywords = [
+        "apply", "take leave", "book leave", "request leave", "i want leave",
+        "take off", "need leave", "take annual", "take sick", "want to take",
+    ]
     if any(k in msg_lower for k in apply_keywords) and not ("cancel" in msg_lower or "balance" in msg_lower or "policy" in msg_lower):
         return {"next_step": "apply_leave_flow"}
 
@@ -225,6 +277,15 @@ def tool_execution_node(state: AgentState) -> dict[str, Any]:
                     "next_step": "end",
                 }
             if missing:
+                partial_payload = json.dumps({
+                    "leave_type": leave_type,
+                    "start_date": s.isoformat() if s else None,
+                    "end_date": e.isoformat() if e else None,
+                })
+                conn.execute(
+                    "INSERT OR REPLACE INTO pending_proposals(session_id, employee_id, action, payload, created_at) VALUES (?,?,?,?,?)",
+                    (state["session_id"], state["identity"].employee_id, "clarify_apply", partial_payload, datetime.now(timezone.utc).isoformat()),
+                )
                 return {
                     "route": "clarify",
                     "answer": f"Please specify {' and '.join(missing)} for your leave request.",
@@ -363,9 +424,20 @@ def tool_execution_node(state: AgentState) -> dict[str, Any]:
             target_emp = m_emp.group(1) if m_emp else None
             status = "pending" if "pending" in msg_lower else ("approved" if "approved" in msg_lower else None)
             res = list_leave_requests(tool_ctx, target_emp, status)
+            if res.status == "error":
+                ans = res.message
+            else:
+                reqs = res.data.get("requests", [])
+                if not reqs:
+                    ans = f"You have no {status or ''} leave requests."
+                else:
+                    lines = [f"You have {len(reqs)} leave request(s):"]
+                    for r in reqs:
+                        lines.append(f"• ID: {r['request_id']} | {r['leave_type'].capitalize()} leave: {r['start_date']} to {r['end_date']} ({r['working_days']} working day(s)) — Status: [{r['status'].upper()}]")
+                    ans = "\n".join(lines)
             return {
                 "route": "tool",
-                "answer": res.message,
+                "answer": ans,
                 "citations": [],
                 "tool_calls": [ToolCall(name="list_leave_requests", args=res.args, status=res.status)],
                 "pending_confirmation": False,
@@ -382,6 +454,23 @@ def retriever_node(state: AgentState) -> dict[str, Any]:
         chunks, upcoming_docs = retrieve_chunks(conn, state["identity"], state["message"], state["ref_date"])
 
     if not chunks:
+        return {
+            "route": "no_answer",
+            "answer": "The available HR policy documents do not cover this question. Please contact the HR team at hr@veltrix.example.",
+            "citations": [],
+            "tool_calls": [],
+            "pending_confirmation": False,
+            "next_step": "end",
+        }
+
+    q = state["message"].lower()
+    content_words = [w for w in re.findall(r"[a-z0-9]+", q) if len(w) > 3 and w not in {
+        "what", "when", "where", "which", "will", "would", "could", "should",
+        "policy", "policies", "document", "documents", "company", "veltrix",
+        "rules", "guidelines", "reimbursement", "allowance", "expense", "expenses"
+    }]
+    all_chunks_text = " ".join(c.text.lower() for c in chunks)
+    if content_words and not any(w in all_chunks_text for w in content_words):
         return {
             "route": "no_answer",
             "answer": "The available HR policy documents do not cover this question. Please contact the HR team at hr@veltrix.example.",
@@ -426,7 +515,18 @@ def crag_verifier_node(state: AgentState) -> dict[str, Any]:
     validated_citations = GuardrailService.validate_citations(citations, chunks)
 
     # If context does not cover question or citations are empty, fall back to no_answer
-    if not validated_citations or "do not cover" in answer.lower():
+    ans_lower = answer.lower()
+    is_uncovered = (
+        not validated_citations
+        or "do not cover" in ans_lower
+        or "does not cover" in ans_lower
+        or "do not contain" in ans_lower
+        or "does not contain" in ans_lower
+        or "no information" in ans_lower
+        or "not mentioned" in ans_lower
+        or "hr@veltrix.example" in ans_lower
+    )
+    if is_uncovered:
         return {
             "route": "no_answer",
             "answer": "The available HR policy documents do not cover this question. Please contact the HR team at hr@veltrix.example.",
