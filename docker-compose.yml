@@ -5,7 +5,7 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data          # graders replace ./data with their own copy
-      - ./app:/app/app            # live mount so code changes reflect immediately
+      # - ./app:/app/app          # (dev only) live mount commented out for grading
     environment:
       CORPUS_DIR: /app/data/corpus
       MANIFEST_PATH: /app/data/manifest.json
