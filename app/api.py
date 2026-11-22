@@ -55,7 +55,7 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception):
-        log.error("unhandled error", extra={"error_type": type(exc).__name__})
+        log.exception("unhandled error", extra={"error_type": type(exc).__name__})
         return JSONResponse({"detail": "internal error"}, status_code=500)
 
     @app.exception_handler(RequestValidationError)
@@ -179,7 +179,7 @@ def create_app(settings: Optional[Settings] = None, ingest_fn: Optional[Callable
                 "request_id": request_id,
                 "employee_id": identity.employee_id,
                 "route": response.route,
-                "message_chars": len(body.message),  # never the text: it may contain personal data
+                "message_chars": len(parsed_body.message),  # never the text: it may contain personal data
                 "latency_ms": round((time.perf_counter() - started) * 1000),
             },
         )
