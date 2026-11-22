@@ -21,12 +21,6 @@ ROUTE_LABELS = {
     "refuse": "🚫 Restricted / Out of Scope",
 }
 
-STATUS_LABELS = {
-    "success": "✅ Completed",
-    "error": "❌ Rejected",
-    "pending_confirmation": "⏳ Waiting for your confirmation",
-}
-
 HTTP_ERRORS = {
     400: "The request was empty or invalid.",
     401: "That employee ID is not recognised in the HR database.",
@@ -63,37 +57,8 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* Clean container styling */
     .stChatInputContainer {
         border-radius: 12px;
-    }
-    .user-badge {
-        display: inline-block;
-        padding: 4px 10px;
-        background-color: #e3f2fd;
-        color: #0d47a1;
-        border-radius: 16px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .status-badge-ready {
-        display: inline-block;
-        padding: 3px 10px;
-        background-color: #e8f5e9;
-        color: #1b5e20;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: bold;
-    }
-    .status-badge-offline {
-        display: inline-block;
-        padding: 3px 10px;
-        background-color: #ffebee;
-        color: #b71c1c;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: bold;
     }
     .route-chip {
         font-size: 0.75rem;
@@ -122,13 +87,6 @@ def new_conversation() -> None:
     st.session_state.session_id = str(uuid.uuid4())
     st.session_state.messages = []
     st.session_state.queued = None
-
-
-def api_health(url: str) -> bool:
-    try:
-        return requests.get(f"{url}/health", timeout=2).status_code == 200
-    except requests.RequestException:
-        return False
 
 
 def call_chat_api(url: str, employee_id: str, text: str) -> dict | None:

@@ -21,9 +21,8 @@ class Settings:
     # Hard per-request ceiling; the spec fails anything slower than 30 s.
     request_timeout_s: float = 25.0
     google_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
+    fallback_models: tuple[str, ...] = ("gemini-2.5-flash", "gemini-1.5-flash")
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Settings":
@@ -47,8 +46,13 @@ class Settings:
         except ValueError as exc:
             raise ValueError(f"APP_TODAY must be YYYY-MM-DD, got {raw_today!r}") from exc
         provider = (e.get("LLM_PROVIDER") or "google").strip().lower()
-        if provider not in {"anthropic", "openai", "google", "mock"}:
-            raise ValueError(f"LLM_PROVIDER must be anthropic|openai|google|mock, got {provider!r}")
+        valid_providers = {"google", "litellm", "mock", "anthropic", "openai"}
+        if provider not in valid_providers:
+            raise ValueError(f"LLM_PROVIDER must be one of {valid_providers}, got {provider!r}")
+
+        raw_fallbacks = e.get("FALLBACK_MODELS", "gemini-2.5-flash,gemini-1.5-flash")
+        fallback_models = tuple(m.strip() for m in raw_fallbacks.split(",") if m.strip())
+
         return cls(
             corpus_dir=Path(e.get("CORPUS_DIR") or "./data/corpus"),
             manifest_path=Path(e.get("MANIFEST_PATH") or "./data/manifest.json"),
@@ -58,7 +62,6 @@ class Settings:
             log_level=(e.get("LOG_LEVEL") or "INFO").upper(),
             log_file=(e.get("LOG_FILE") or None),
             google_api_key=(e.get("GOOGLE_API_KEY") or e.get("GEMINI_API_KEY") or None),
-            anthropic_api_key=(e.get("ANTHROPIC_API_KEY") or None),
-            openai_api_key=(e.get("OPENAI_API_KEY") or None),
-            gemini_model=(e.get("GEMINI_MODEL") or "gemini-1.5-flash").strip(),
+            gemini_model=(e.get("GEMINI_MODEL") or "gemini-3.5-flash-lite").strip(),
+            fallback_models=fallback_models,
         )

@@ -81,14 +81,14 @@ class LLMGateway:
             },
         )
 
-        # Use Google Gemini when provider is google and API key is present
-        if self.settings.llm_provider == "google" and self.settings.google_api_key:
-            return self._call_gemini(identity, query, chunks, upcoming_docs, request_id, corpus_tokens)
+        # Use LiteLLM with fallback models when provider is litellm or google and API key is present
+        if self.settings.llm_provider in {"litellm", "google"} and self.settings.google_api_key:
+            return self._call_litellm_with_fallbacks(identity, query, chunks, upcoming_docs, request_id, corpus_tokens)
 
         # Fallback to deterministic local engine (mock / test mode)
         return self._call_deterministic_engine(identity, query, chunks, upcoming_docs, ref_date_is_past)
 
-    def _call_gemini(
+    def _call_litellm_with_fallbacks(
         self,
         identity: Identity,
         query: str,
@@ -97,6 +97,81 @@ class LLMGateway:
         request_id: str,
         corpus_tokens: int,
     ) -> tuple[str, list[Citation]]:
+        """Tier 1 & Tier 2: LiteLLM Router executing primary model with automatic fallback list."""
+        corpus_context = "\n\n".join(
+            f"--- Document: {c.doc_id} | Locator: {c.locator} | Effective: {c.effective_date} ---\n{c.text}"
+            for c in chunks
+        )
+
+        user_content = (
+            f"Requester Details: Role={identity.role}, Region={identity.region}\n\n"
+            f"Document Chunks:\n{corpus_context}\n\n"
+            f"User Question: {query}\n\n"
+            "Answer the question clearly using the relevant document chunks according to precedence and side-by-side rules. "
+            "Include citations in the format [doc_id, locator]."
+        )
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+        def _format_model_name(name: str) -> str:
+            n = name.strip()
+            if not any(n.startswith(prefix) for prefix in ("gemini/", "openai/", "anthropic/", "ollama/")):
+                return f"gemini/{n}"
+            return n
+
+        primary_model = _format_model_name(self.settings.gemini_model)
+        fallbacks = [_format_model_name(m) for m in self.settings.fallback_models if m.strip()]
+
+        try:
+            import os
+            os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+            import litellm
+
+            litellm.telemetry = False
+            litellm.drop_params = True
+            litellm.suppress_debug_info = True
+
+            models_to_try = [primary_model] + [m for m in fallbacks if m != primary_model]
+            last_err = None
+            for model_name in models_to_try:
+                try:
+                    resp = litellm.completion(
+                        model=model_name,
+                        messages=messages,
+                        temperature=0.0,
+                        max_tokens=2048,
+                        timeout=self.settings.request_timeout_s,
+                        api_key=self.settings.google_api_key,
+                    )
+                    answer = resp.choices[0].message.content.strip()
+                    citations = self._extract_citations_from_text(answer, chunks)
+                    log.info("litellm completion succeeded", extra={"model": model_name, "request_id": request_id})
+                    return answer, citations
+                except Exception as m_err:
+                    log.warning("litellm model %s failed: %s; trying next fallback", model_name, m_err, extra={"request_id": request_id})
+                    last_err = m_err
+
+            raise last_err or RuntimeError("All LiteLLM candidate models failed")
+        except Exception as exc:
+            log.warning("litellm call failed (%s); trying direct gemini endpoint fallback", exc, extra={"request_id": request_id})
+            try:
+                return self._call_gemini_direct(identity, query, chunks, upcoming_docs, request_id)
+            except Exception as gem_exc:
+                log.warning("direct gemini call also failed (%s); engaging Tier 3 local deterministic engine", gem_exc, extra={"request_id": request_id})
+                return self._call_deterministic_engine(identity, query, chunks, upcoming_docs)
+
+    def _call_gemini_direct(
+        self,
+        identity: Identity,
+        query: str,
+        chunks: Sequence[RetrievedChunk],
+        upcoming_docs: Sequence[DocMeta],
+        request_id: str,
+    ) -> tuple[str, list[Citation]]:
+        """Secondary fallback directly calling Google Gemini endpoint."""
         url = GEMINI_API_URL.format(model=self.settings.gemini_model)
         params = {"key": self.settings.google_api_key}
 
@@ -119,17 +194,13 @@ class LLMGateway:
             "generationConfig": {"temperature": 0.0, "maxOutputTokens": 2048},
         }
 
-        try:
-            with httpx.Client(timeout=self.settings.request_timeout_s) as client:
-                res = client.post(url, params=params, json=payload)
-                res.raise_for_status()
-                data = res.json()
-                answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                citations = self._extract_citations_from_text(answer, chunks)
-                return answer, citations
-        except Exception:
-            log.exception("gemini api call failed; falling back to deterministic engine", extra={"request_id": request_id})
-            return self._call_deterministic_engine(identity, query, chunks, upcoming_docs)
+        with httpx.Client(timeout=self.settings.request_timeout_s) as client:
+            res = client.post(url, params=params, json=payload)
+            res.raise_for_status()
+            data = res.json()
+            answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            citations = self._extract_citations_from_text(answer, chunks)
+            return answer, citations
 
     def _extract_citations_from_text(self, text: str, chunks: Sequence[RetrievedChunk]) -> list[Citation]:
         citations: list[Citation] = []

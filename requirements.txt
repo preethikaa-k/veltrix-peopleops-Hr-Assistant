@@ -14,12 +14,13 @@ beautifulsoup4==4.12.3
 Pillow==11.0.0
 reportlab>=4.0
 
-# Token Budgeting, Embeddings & Agentic AI Framework (LangGraph)
+# Token Budgeting, Embeddings, LiteLLM & Agentic AI Framework (LangGraph)
 tiktoken==0.8.0
 langchain>=0.3.0
 langchain-core>=0.3.0
 langgraph>=0.2.0
 qdrant-client>=1.10.0
+litellm>=1.50.0
 
 # Testing & Verification
 pytest==8.3.4

@@ -101,8 +101,29 @@ class RagasEvaluator:
         self.embed_svc = EmbeddingService()
 
     def _call_gemini_raw(self, prompt: str) -> str:
-        if self.settings.llm_provider != "google" or not self.settings.google_api_key:
+        if self.settings.llm_provider not in {"litellm", "google"} or not self.settings.google_api_key:
             return ""
+        try:
+            import os
+            os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+            import litellm
+            litellm.telemetry = False
+            litellm.drop_params = True
+            litellm.suppress_debug_info = True
+
+            resp = litellm.completion(
+                model=f"gemini/{self.settings.gemini_model}",
+                messages=[{"role": "user", "content": prompt}],
+                fallbacks=["gemini/gemini-2.5-flash"],
+                temperature=0.0,
+                max_tokens=1024,
+                timeout=15.0,
+                api_key=self.settings.google_api_key,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception:
+            pass
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.settings.gemini_model}:generateContent"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],

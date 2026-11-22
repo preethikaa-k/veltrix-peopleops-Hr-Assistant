@@ -1,6 +1,11 @@
 .env
 __pycache__/
 .pytest_cache/
+venv/
+.venv/
+*.pyc
+*.log
+.coverage
+htmlcov/
 data/*
 !data/.gitkeep
-*.log

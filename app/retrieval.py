@@ -20,7 +20,7 @@ from typing import Optional, Sequence
 
 from app.db import Identity
 from app.embeddings import EmbeddingService
-from app.policy import DocMeta, can_read, is_eligible, region_matches
+from app.policy import DocMeta, can_read, region_matches
 from app.qdrant_service import get_qdrant_store
 from app.tokens import count_tokens
 
